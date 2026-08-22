@@ -1,0 +1,9 @@
+# built by tools/package.sh
+dist/
+
+*.log
+.DS_Store
+Thumbs.db
+node_modules/
+.env
+.env.*
