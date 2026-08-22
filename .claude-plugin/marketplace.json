@@ -1,0 +1,16 @@
+{
+  "name": "grokify",
+  "owner": {
+    "name": "bomsn",
+    "url": "https://github.com/bomsn"
+  },
+  "plugins": [
+    {
+      "name": "grokify",
+      "source": "./",
+      "description": "Hand a draft to Grok for a rewrite and get Grok's output back verbatim.",
+      "category": "writing",
+      "tags": ["grok", "writing", "rewrite", "editing", "voice"]
+    }
+  ]
+}

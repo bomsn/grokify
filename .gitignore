@@ -7,3 +7,6 @@ Thumbs.db
 node_modules/
 .env
 .env.*
+
+# an API key kept beside the project
+.grokify-key

@@ -1,0 +1,13 @@
+{
+  "name": "grokify",
+  "version": "1.0.0",
+  "description": "Hand a draft to Grok for a rewrite and get Grok's output back verbatim. Includes a host-side bridge so it works in Cowork, where the sandbox cannot reach a local Grok CLI.",
+  "author": {
+    "name": "bomsn"
+  },
+  "homepage": "https://github.com/bomsn/grokify",
+  "repository": "https://github.com/bomsn/grokify",
+  "license": "MIT",
+  "keywords": ["grok", "writing", "rewrite", "editing", "voice"],
+  "mcpServers": "./.mcp.json"
+}

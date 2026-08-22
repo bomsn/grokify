@@ -1,8 +1,73 @@
-# The Grok CLI
+# Reaching Grok
 
-Grokify calls one thing: `grok`. Not Gemini, not Codex, not Claude. The
+Grokify calls one model: Grok. Not Gemini, not Codex, not Claude. The
 whole point is routing writing to the model that writes like a person, so
 the tool has exactly one engine and no menu.
+
+There are two ways to reach it, and the runner takes whichever is
+available.
+
+## The API, with no CLI at all
+
+Set `XAI_API_KEY` and there is nothing to install:
+
+```bash
+export XAI_API_KEY=...        # keys are issued at https://console.x.ai
+```
+
+The runner posts one chat completion to `https://api.x.ai/v1/chat/completions`.
+The payload's standing rules become the system message and this job's
+material becomes the user message, which is the split the payload was
+written for.
+
+This route is worth choosing on purpose. A rewrite is one completion; an
+agent CLI spends a session start-up, a tool loop and a transcript on top
+of it, and the difference on a long document is minutes. There is no
+command line, so none of the length limits below apply. `--transport api`
+forces it even where a binary exists.
+
+It is also the only route that works inside a sandbox. Cowork and cloud
+sessions run in a container with no CLI installed and no way to install
+one, so a key is the difference between the skill working there and not.
+
+**If the request is refused before it leaves.** A sandbox filters outbound
+traffic by host. In the Claude desktop app the setting is Organization
+settings -> Capabilities -> Code execution -> Allow network egress, with a
+mode and a list of additional domains. `api.x.ai` has to be reachable.
+Note that additional-domain entries are reported not to take effect while
+the mode is "Package managers only"; the mode that is known to work is
+"All domains".
+
+### Where the key comes from
+
+`XAI_API_KEY` or `GROKIFY_API_KEY` in the environment, and if neither is
+set, the first readable file of `$GROKIFY_API_KEY_FILE`,
+`~/.grokify/api-key`, `./.grokify-key`. First line, whitespace trimmed.
+
+The file matters inside a sandbox. Each shell call there starts fresh, so
+an exported variable does not survive to the next command, and a file
+does. Write the key once at the start of a session:
+
+```bash
+mkdir -p ~/.grokify && printf '%s' "$KEY" > ~/.grokify/api-key
+```
+
+`.grokify-key` is in the project's `.gitignore`. A key pasted into a chat
+also lives in that transcript, so prefer a file the assistant reads over
+one you type into the conversation.
+
+| Variable | Effect |
+|---|---|
+| `XAI_API_KEY` or `GROKIFY_API_KEY` | The key. Either name works. |
+| `GROKIFY_API_KEY_FILE` | A file to read the key from instead. |
+| `GROKIFY_API_URL` | Endpoint. Defaults to xAI's; point it at a gateway if you have one. |
+| `GROKIFY_API_MODEL` | Model id. Defaults to `grok-4.6`. |
+| `GROKIFY_API_MAX_TOKENS` | Output ceiling. Defaults to 32000. |
+
+If the endpoint rejects the model id, the runner prints its error
+verbatim, and that error names what it will accept.
+
+## The CLI
 
 Everything below is the xAI Grok CLI's documented interface. Where a
 detail matters, it is worth reading the source:

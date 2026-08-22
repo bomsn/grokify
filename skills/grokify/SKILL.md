@@ -17,16 +17,41 @@ voice the user is paying Grok to remove.
 
 ## Requirements
 
-The `grok` binary, on PATH and authenticated. Either CLI works:
+A route to Grok. There are three, and the first one that exists wins.
+
+**The host bridge**, which is what the plugin install provides. A
+`grokify_rewrite` tool means it is already there and nothing else is
+needed - it runs on the user's machine and uses the Grok CLI already
+installed and logged in there. Step 5 covers how to call it. Everything
+below is for a plain skill install, or for a machine with no CLI.
+
+**An API key.** `XAI_API_KEY` in the environment and nothing else. No
+install, no login, no command-line limits, and it is the faster route: a
+rewrite is one completion, where an agent CLI spends a session start-up, a
+tool loop and a transcript on top of it.
+
+A sandbox usually has no way to keep an exported variable between
+commands, so write the key to a file instead and the runner will find it:
+`$GROKIFY_API_KEY_FILE`, then `~/.grokify/api-key`, then `./.grokify-key`.
+A key pasted into a chat also lives in that transcript; a file is the safer
+place for it.
+
+A sandbox with no host bridge also has to be allowed to reach `api.x.ai`.
+If the request never connects, its egress allowlist does not include that
+host; see `reference/troubleshooting.md`. Nothing in the skill can work
+around a blocked host, so say so rather than retrying.
+
+**Or the `grok` binary**, on PATH and authenticated. Either CLI works:
 
 - xAI Grok CLI: `curl -fsSL https://x.ai/cli/install.sh | bash`
   (Windows: `irm https://x.ai/cli/install.ps1 | iex`)
 - superagent-ai/grok-cli: `curl -fsSL https://raw.githubusercontent.com/superagent-ai/grok-cli/main/install.sh | bash`
 
-Both expose `grok -p "<prompt>"`, which is the only interface Grokify
-uses, and the only documented headless entry point. Grok is the only
-model Grokify ever calls. Never substitute another CLI, and never fall
-back to rewriting the draft here.
+Both expose `grok -p "<prompt>"`, the only documented headless entry
+point, and the only CLI interface Grokify uses.
+
+Grok is the only model Grokify ever calls, by either route. Never
+substitute another CLI, and never fall back to rewriting the draft here.
 
 Verify before the first run of a session:
 
@@ -68,6 +93,7 @@ reply in auto mode.
 | `--lang <language>` | Output language. Defaults to the draft's language. |
 | `--model <name>` | Passed to `grok -m`. |
 | `--effort <level>` | Passed to `grok --effort`. Levels vary by model; `--check` lists what the account reaches. |
+| `--transport api` | Force the API route even where a binary exists. Faster, and immune to command-line limits. |
 | `--bin <path>` | Full path to the grok binary, when PATH does not have it. |
 | `--out <path>` | Also write the result to this file. |
 | `--diff` | Print a short list of what changed after the result. |
@@ -173,7 +199,25 @@ tag teaches the model that reference material is optional and unimportant.
 
 ## Step 5 - Run Grok
 
-The runner lives beside this file, and the shell's working directory is the
+Two ways to reach Grok. Check for the first before falling back to the
+second; they take the same payload and produce the same result.
+
+**A host tool, if one is present.** When a `grokify_rewrite` tool is
+available, call it with the assembled payload and use what it returns.
+That tool runs on the user's own machine, outside any sandbox, so it
+reaches a Grok CLI installed there and the machine's own network. In a
+sandboxed session - Cowork, a cloud session - it is the only route that
+works, and it needs nothing configured beyond the user's existing Grok
+login. Prefer it whenever it exists, including on a local machine, where
+it saves a shell round trip.
+
+If it returns an error, call `grokify_env` once and report what it says.
+That distinguishes a missing CLI from a blocked network, which need
+opposite fixes, and reports which side of the sandbox boundary the tool is
+running on.
+
+**Otherwise the runner**, which is what a plain skill install has. The
+runner lives beside this file, and the shell's working directory is the
 user's project, not the skill directory. `${CLAUDE_SKILL_DIR}` expands to
 this skill's own directory wherever it is installed, so use it rather than
 guessing a path.
@@ -245,8 +289,8 @@ The script exits non-zero and prints the real error. Surface it.
 
 | Exit | Meaning | Response |
 |---|---|---|
-| 127 | `grok` not found | Print the script's own message: it lists every directory searched and the two ways to fix it. Ask the user for `which grok` or `where.exe grok` output. Never guess a path. |
-| 126 | Present but not authenticated | Tell the user to run `grok login`, or `grok login --device-auth` on a headless box. |
+| 127 | No route to Grok | Neither a binary nor an API key. In a sandbox the answer is `XAI_API_KEY`, since no binary can be installed there. On a workstation, ask for `which grok` or `where.exe grok` output rather than guessing a path. |
+| 126 | Rejected credentials | An API key the endpoint refused, or a CLI that has not signed in. The message says which. |
 | 124 | Timed out | Suggest a longer `--timeout`, or a shorter draft. |
 | 3 | Empty output | Re-run once with `--keep` and report the payload path. |
 | other | Grok returned an error | Print stderr as-is. |

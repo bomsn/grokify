@@ -98,53 +98,97 @@ time.
 
 ## Install
 
+One artifact. Grokify is a plugin, not a loose skill, and that is a
+deliberate choice rather than a packaging preference - see
+[Why a plugin](#why-a-plugin) below.
+
 ```bash
 git clone https://github.com/bomsn/grokify
+bash grokify/tools/package.sh        # or: pwsh grokify/tools/package.ps1
 ```
 
-**Claude Code, everywhere.** Copy the skill folder into your personal
-skills directory and it becomes `/grokify` in every project.
+That writes `dist/grokify.plugin`. Open it in the Claude desktop app and
+accept it. You get `/grokify:grokify`, and it works in Cowork, in cloud
+sessions, and in local Claude Code sessions alike.
+
+**Straight from GitHub**, without cloning or building:
+
+```
+/plugin marketplace add bomsn/grokify
+/plugin install grokify@grokify
+```
+
+Node 18 or later has to be on your PATH, because that is what runs the
+bridge. Without it the plugin still installs and the skill still works
+wherever your own shell can reach Grok; you just lose the sandbox route.
+
+Ask for `grokify_env` if a run fails. It reports where the bridge is
+running, whether it found your CLI, and whether the network answered -
+which tells a missing CLI apart from a blocked network, two problems with
+opposite fixes.
+
+## Why a plugin
+
+Because a skill on its own cannot work everywhere, and shipping one that
+half-works is worse than not shipping it.
+
+Cowork and cloud sessions run shell commands inside a sandboxed Linux VM,
+isolated from your machine, behind a network proxy the sandbox cannot
+reconfigure. A skill is instructions plus scripts, and those scripts run
+in that VM. From there your Grok CLI is not on the PATH and cannot be put
+there, and `api.x.ai` is reachable only if an administrator has allowed
+it. A skill archive uploaded to the desktop app installs cleanly and then
+fails at the first run, which is the worst possible outcome: it looks
+installed.
+
+A plugin can carry an MCP server, and a plugin's MCP server runs natively
+on the device rather than in the VM. That is the supported way across the
+line. So the bridge reaches the Grok CLI you already have installed and
+logged in, and the machine's own network, with nothing to configure.
+
+The skill still lives in `skills/grokify/` and still holds every rule
+about what Grok gets and what it must not change. The plugin is what
+delivers it somewhere it can run.
+
+Copying `skills/grokify/` into `~/.claude/skills/` by hand still works if
+you only ever use local Claude Code and would rather not have an MCP
+server running. You lose Cowork, and that is the whole trade.
+
+## Routes to Grok
+
+Three, and the first one that exists wins.
+
+**The host bridge**, which the plugin installs. Nothing to configure: it
+runs on your machine and uses the Grok login already there. This is the
+only route that works inside Cowork without an administrator opening the
+network.
+
+**An API key.** Set `XAI_API_KEY` and the runner posts one chat completion
+straight to the API. No CLI, no login, no command-line limits, and it is
+the fastest route: a rewrite is one completion, where an agent CLI spends
+a session start-up, a tool loop and a transcript on top of it.
 
 ```bash
-mkdir -p ~/.claude/skills
-cp -r grokify/skills/grokify ~/.claude/skills/
+export XAI_API_KEY=...        # keys are issued at https://console.x.ai
 ```
 
-```powershell
-mkdir "$env:USERPROFILE\.claude\skills" -Force
-Copy-Item grokify\skills\grokify "$env:USERPROFILE\.claude\skills\" -Recurse
-```
-
-You should land at `~/.claude/skills/grokify/SKILL.md`. Claude Code watches
-that directory and picks the skill up mid-session; restart only if
-`~/.claude/skills` did not exist when you started. `/skills` confirms it.
-
-**Claude Code, one project.** Copy it to that repo's `.claude/skills/`
-instead and commit it.
-
-**As an uploadable archive.** Build one, then upload it in the Claude
-desktop app or on claude.ai:
+In a sandbox, put the key in a file rather than the environment - every
+command gets a fresh shell there, so an `export` is gone by the next one:
 
 ```bash
-bash grokify/tools/package.sh          # or: pwsh grokify/tools/package.ps1
+mkdir -p ~/.grokify && printf '%s' 'xai-...' > ~/.grokify/api-key
+chmod 600 ~/.grokify/api-key
 ```
 
-That writes `dist/grokify.zip` and an identical `dist/grokify.skill`, each
-holding a single `grokify/` folder with `SKILL.md` at its top, which is the
-layout the uploader and the Skills API accept. The packager also checks the
-frontmatter against the six fields the spec allows, since an extra field
-fails an upload outright rather than being ignored.
+The runner reads `$GROKIFY_API_KEY_FILE`, then `~/.grokify/api-key`, then
+`./.grokify-key`, before falling back to the environment. Inside a sandbox
+this route also needs `api.x.ai` on the egress allowlist, which on Claude
+Desktop is an organization-owner setting on a Team or Enterprise plan;
+[`troubleshooting.md`](skills/grokify/reference/troubleshooting.md) has the
+one-line check. The bridge sidesteps all of that.
 
-**Where it actually runs.** Grokify calls the `grok` binary on your
-machine, so it works wherever your own shell does: Claude Code sessions
-running locally, and desktop scheduled tasks, which also run locally. It
-does not work in Cowork or cloud sessions. Those execute in a sandbox with
-no access to your machine, so `grok` is not there and the run fails with
-exit 127. Uploading the skill does not change that: the skill loads, the
-binary still is not there.
-
-You need [Claude Code](https://claude.com/claude-code) and the Grok CLI,
-authenticated. Either one works:
+**Or the Grok CLI**, which the bridge uses and which the runner uses
+directly when you are in your own shell. Either CLI works:
 
 - xAI: `curl -fsSL https://x.ai/cli/install.sh | bash`
   (Windows: `irm https://x.ai/cli/install.ps1 | iex`)
@@ -153,7 +197,7 @@ authenticated. Either one works:
 Run `grok` once and sign in, or set `XAI_API_KEY`. Then check the wiring:
 
 ```bash
-bash ~/.claude/skills/grokify/scripts/grokify.sh --check
+bash skills/grokify/scripts/grokify.sh --check
 ```
 
 ## Usage
@@ -349,8 +393,19 @@ its temp directory.
 
 ## Layout
 
+The repository is the plugin. There is no `plugin/` subfolder and no
+assembly step, because there is nothing to assemble it from.
+
 ```
-skills/grokify/                     copy this to ~/.claude/skills/
+.claude-plugin/
+├── plugin.json                     the plugin manifest
+└── marketplace.json                so /plugin marketplace add works
+.mcp.json                           declares the host bridge
+
+servers/
+└── grokify-host.mjs                runs on your machine, outside the sandbox
+
+skills/grokify/
 ├── SKILL.md                        the skill Claude reads
 ├── reference/
 │   ├── payload-template.md         the prompt Grok receives, block by block
@@ -363,7 +418,7 @@ skills/grokify/                     copy this to ~/.claude/skills/
     └── grokify.ps1                 the same, for Windows PowerShell
 
 tools/
-├── package.sh                      builds dist/grokify.zip and dist/grokify.skill
+├── package.sh                      builds dist/grokify.plugin
 └── package.ps1
 ```
 

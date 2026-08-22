@@ -10,7 +10,13 @@
   grok binary, passing the prompt in a way that survives Windows, enforcing a
   timeout, and turning failures into exit codes the caller can act on.
 
-  Three ways the payload can travel:
+  Four ways the payload can travel:
+
+    api     Straight to the xAI API over HTTPS, no CLI involved. Used when no
+            grok binary is found and XAI_API_KEY is set, which is the only
+            route open inside a sandbox. Also the fastest anywhere: a rewrite
+            is one completion, where an agent CLI spends a session start-up, a
+            tool loop and a transcript on top of it.
 
     rules   The whole brief is written to AGENTS.md in a scratch directory and
             reached with --cwd. The CLI loads project rules from disk with no
@@ -57,7 +63,7 @@
   grok binary name or full path, when PATH does not have it.
 
 .PARAMETER Transport
-  auto, inline, rules, or file. Default auto.
+  auto, api, inline, rules, or file. Default auto.
 
 .PARAMETER Raw
   Skip output cleanup; keep grok's output byte for byte.
@@ -100,6 +106,17 @@ if ($TimeoutSec -le 0 -and $env:GROKIFY_TIMEOUT) { $TimeoutSec = [int]$env:GROKI
 
 function Write-Err([string]$Message) { [Console]::Error.WriteLine("grokify: $Message") }
 
+# Windows PowerShell 5.1 still defaults to SSL 3.0 / TLS 1.0 on older builds,
+# which every current HTTPS endpoint refuses. The refusal surfaces as a
+# connection failure, which is indistinguishable from a blocked host unless
+# this is set first. Additive, so it does not disturb a session that already
+# negotiated something newer.
+try {
+    [System.Net.ServicePointManager]::SecurityProtocol =
+        [System.Net.ServicePointManager]::SecurityProtocol -bor `
+        [System.Net.SecurityProtocolType]::Tls12
+} catch { }
+
 # Flags every headless run needs. Without --no-alt-screen the CLI can take over
 # the terminal with its full-screen interface, which under a redirected stdout
 # renders nowhere and waits forever. --output-format plain keeps the answer free
@@ -113,7 +130,21 @@ $fileArgsDefault = '--always-approve --max-turns 6'
 $baseArgs = if ($env:GROKIFY_BASE_ARGS) { $env:GROKIFY_BASE_ARGS } else { $baseArgsDefault }
 $fileArgs = if ($env:GROKIFY_FILE_ARGS) { $env:GROKIFY_FILE_ARGS } else { $fileArgsDefault }
 
-if ($Transport -notin @('auto', 'inline', 'rules', 'file')) { Write-Err '-Transport must be auto, inline, rules, or file'; exit 2 }
+if ($Transport -notin @('auto', 'api', 'inline', 'rules', 'file')) { Write-Err '-Transport must be auto, api, inline, rules, or file'; exit 2 }
+
+# A sandbox has no way to receive an exported variable: each shell call starts
+# fresh. So a key may also live in a file, which survives for the session.
+$apiKey = if ($env:GROKIFY_API_KEY) { $env:GROKIFY_API_KEY } elseif ($env:XAI_API_KEY) { $env:XAI_API_KEY } else { '' }
+if (-not $apiKey) {
+    foreach ($kf in @($env:GROKIFY_API_KEY_FILE, (Join-Path $HOME '.grokify/api-key'), './.grokify-key')) {
+        if ($kf -and (Test-Path -LiteralPath $kf)) {
+            $apiKey = ((Get-Content -LiteralPath $kf -TotalCount 1) -join '').Trim()
+            if ($apiKey) { break }
+        }
+    }
+}
+$apiUrl = if ($env:GROKIFY_API_URL) { $env:GROKIFY_API_URL } else { 'https://api.x.ai/v1/chat/completions' }
+$apiModelDefault = if ($env:GROKIFY_API_MODEL) { $env:GROKIFY_API_MODEL } else { 'grok-4.6' }
 
 function Split-Args([string]$Text) { @($Text -split '\s+' | Where-Object { $_ }) }
 
@@ -156,7 +187,12 @@ function Find-Grok {
 }
 
 $binPath = Find-Grok -Name $Bin
-if (-not $binPath) {
+
+# The CLI is one way to reach Grok, not the only one. Where there is no binary
+# but there is an API key, talk to the API directly.
+if (-not $binPath -and $apiKey -and ($Transport -eq 'auto' -or $Transport -eq 'api')) {
+    $Transport = 'api'
+} elseif (-not $binPath) {
     Write-Err "'$Bin' was not found on PATH, and is not in any of the directories the Grok CLI normally installs to."
     [Console]::Error.WriteLine(@"
 
@@ -174,6 +210,17 @@ Then pass it per run with -Bin, or set it once:
 
 Install the Grok CLI:
   irm https://x.ai/cli/install.ps1 | iex
+
+Or skip the CLI entirely and use an API key, which needs no install at all:
+
+  `$env:XAI_API_KEY = '...'     (get one at https://console.x.ai)
+
+In a sandbox - Cowork, a cloud session, a container - there is no CLI to find
+and no way to install one, and an environment variable does not survive to the
+next command. Write the key to a file instead; this script reads the first one
+it can:
+
+  `$env:GROKIFY_API_KEY_FILE, then `$HOME\.grokify\api-key, then .\.grokify-key
 "@)
     exit 127
 }
@@ -194,6 +241,37 @@ if ($env:GROKIFY_MAX_INLINE_CHARS) {
 } else {
     $maxInline = 2080 - $binPath.Length - $baseArgs.Length - $fileArgs.Length - 128
     if ($maxInline -lt 256) { $maxInline = 256 }
+}
+
+function Test-GrokEndpoint {
+    # Report whether the host answers at all. A blocked egress allowlist and a
+    # bad key look nothing alike: the first never connects, the second returns
+    # 401 from a host that is plainly reachable.
+    param([string]$Url, [string]$Key)
+    $host_ = ([System.Uri]$Url).Host
+    try {
+        $r = Invoke-WebRequest -Uri "https://$host_/v1/models" -Method GET `
+             -Headers @{ Authorization = "Bearer $Key" } -TimeoutSec 15 -UseBasicParsing
+        return "reachable, key accepted (http $($r.StatusCode))"
+    } catch [System.Net.WebException] {
+        $resp = $_.Exception.Response
+        if ($resp) { return "reachable, but the key was rejected (http $([int]$resp.StatusCode))" }
+        return "BLOCKED - no connection to $host_. A sandbox egress allowlist has to include $host_. See reference/troubleshooting.md."
+    } catch {
+        $code = $null
+        try { $code = [int]$_.Exception.Response.StatusCode } catch {}
+        if ($code) { return "reachable, but the key was rejected (http $code)" }
+        return "BLOCKED - no connection to $host_. A sandbox egress allowlist has to include $host_. See reference/troubleshooting.md."
+    }
+}
+
+if ($Check -and $Transport -eq 'api') {
+    Write-Output "route:        xAI API (no CLI binary found)"
+    Write-Output "endpoint:     $apiUrl"
+    Write-Output "api key:      set ($($apiKey.Length) chars)"
+    Write-Output "model:        $(if ($Model) { $Model } else { $apiModelDefault })"
+    Write-Output "connection:   $(Test-GrokEndpoint -Url $apiUrl -Key $apiKey)"
+    exit 0
 }
 
 if ($Check) {
@@ -285,7 +363,9 @@ for ($i = 0; $i -lt $payloadLines.Count; $i++) {
 }
 
 $resolvedTransport = $Transport
-if ($Transport -eq 'auto') {
+if ($Transport -eq 'api') {
+    $resolvedTransport = 'api'
+} elseif ($Transport -eq 'auto') {
     if ($payloadChars -le $maxInline) {
         $resolvedTransport = 'inline'
     } elseif ($taskStart -ge 0) {
@@ -393,7 +473,9 @@ $grokArgs = @(Split-Args $baseArgs)
 if ($Model)  { $grokArgs += @('-m', $Model) }
 if ($Effort) { $grokArgs += @('--effort', $Effort) }
 
-if ($resolvedTransport -eq 'rules') {
+if ($resolvedTransport -eq 'api') {
+    $prompt = ''
+} elseif ($resolvedTransport -eq 'rules') {
     $rulesDir = Join-Path $workDir 'rules'
     New-Item -ItemType Directory -Path $rulesDir -Force | Out-Null
     $briefText = ($payloadLines[0..($taskStart - 1)] -join [Environment]::NewLine)
@@ -431,7 +513,11 @@ Everything between them is the piece and only the piece: no preamble, no notes, 
 
 if ($env:GROKIFY_EXTRA_ARGS) { $grokArgs += Split-Args $env:GROKIFY_EXTRA_ARGS }
 
-[Console]::Error.WriteLine("grokify: transport=$resolvedTransport payload=$payloadChars chars prompt=$($prompt.Length) chars timeout=${TimeoutSec}s binary=$binPath")
+if ($resolvedTransport -eq 'api') {
+    [Console]::Error.WriteLine("grokify: transport=api payload=$payloadChars chars timeout=${TimeoutSec}s endpoint=$apiUrl model=$(if ($Model) { $Model } else { $apiModelDefault })")
+} else {
+    [Console]::Error.WriteLine("grokify: transport=$resolvedTransport payload=$payloadChars chars prompt=$($prompt.Length) chars timeout=${TimeoutSec}s binary=$binPath")
+}
 
 # On the rules path the brief reaches the model through project rules. A build
 # that does not load them would rewrite from the task line alone, which reads
@@ -472,12 +558,69 @@ if ($resolvedTransport -eq 'rules' -and $env:GROKIFY_VERIFY_RULES -eq '1') {
     }
 }
 
-$run = Invoke-Grok -GrokArgs ($grokArgs + @('-p', $prompt))
+function Invoke-GrokApi {
+    # A rewrite is one completion. The payload already splits into standing
+    # rules and this job's material, which is exactly the system/user split the
+    # API wants.
+    $splitIdx = -1
+    for ($i = 0; $i -lt $payloadLines.Count; $i++) {
+        if ($payloadLines[$i] -eq '</output_format>') { $splitIdx = $i + 1; break }
+    }
+    $systemText = if ($splitIdx -gt 0) { ($payloadLines[0..($splitIdx - 1)] -join "`n") } else { '' }
+    $userText = if ($splitIdx -gt 0) { ($payloadLines[$splitIdx..($payloadLines.Count - 1)] -join "`n") } else { $payloadText }
+
+    $messages = @()
+    if ($systemText.Trim()) { $messages += @{ role = 'system'; content = $systemText } }
+    $messages += @{ role = 'user'; content = $userText }
+
+    $maxTokens = if ($env:GROKIFY_API_MAX_TOKENS) { [int]$env:GROKIFY_API_MAX_TOKENS } else { 32000 }
+    $bodyJson = @{
+        model      = $(if ($Model) { $Model } else { $apiModelDefault })
+        messages   = $messages
+        max_tokens = $maxTokens
+    } | ConvertTo-Json -Depth 6 -Compress
+
+    # Send bytes, not a string. Invoke-RestMethod on Windows PowerShell 5.1
+    # encodes a string body with the default code page, which corrupts every
+    # non-ASCII character on the way out.
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($bodyJson)
+
+    try {
+        $resp = Invoke-RestMethod -Uri $apiUrl -Method Post -Body $bytes `
+            -ContentType 'application/json; charset=utf-8' `
+            -Headers @{ Authorization = "Bearer $apiKey" } `
+            -TimeoutSec $TimeoutSec
+    } catch {
+        $detail = $_.Exception.Message
+        try {
+            $stream = $_.Exception.Response.GetResponseStream()
+            $reader = New-Object System.IO.StreamReader($stream, [System.Text.Encoding]::UTF8)
+            $raw = $reader.ReadToEnd()
+            if ($raw) { $detail = $raw }
+        } catch { }
+        return @{ TimedOut = $false; Code = 1; Stdout = ''; Stderr = $detail }
+    }
+
+    if ($resp.error) {
+        $m = if ($resp.error.message) { $resp.error.message } else { ($resp.error | ConvertTo-Json -Compress) }
+        return @{ TimedOut = $false; Code = 1; Stdout = ''; Stderr = "the API refused the request: $m" }
+    }
+    if (-not $resp.choices -or -not $resp.choices[0].message.content) {
+        return @{ TimedOut = $false; Code = 1; Stdout = ''; Stderr = "unexpected response shape: $($resp | ConvertTo-Json -Depth 4 -Compress)" }
+    }
+    return @{ TimedOut = $false; Code = 0; Stdout = $resp.choices[0].message.content; Stderr = '' }
+}
+
+if ($resolvedTransport -eq 'api') {
+    $run = Invoke-GrokApi
+} else {
+    $run = Invoke-Grok -GrokArgs ($grokArgs + @('-p', $prompt))
+}
 
 # A build that does not carry one of the automation flags rejects the whole
 # command line. Retry once with nothing but the prompt rather than reporting a
 # flag error as a rewrite failure.
-if (-not $run.TimedOut -and $run.Code -ne 0 -and
+if ($resolvedTransport -ne 'api' -and -not $run.TimedOut -and $run.Code -ne 0 -and
     $run.Stderr -match '(?i)unexpected argument|unknown (flag|option|argument)|invalid (flag|option)|unrecognized') {
     Write-Err 'this build rejected one of the automation flags; retrying with -p only.'
     $minArgs = @()
@@ -502,7 +645,8 @@ if ($run.Code -ne 0) {
         Remove-WorkDir
         exit 126
     }
-    Write-Err "grok exited with status $($run.Code)."
+    if ($resolvedTransport -eq 'api') { Write-Err 'the API call failed.' }
+    else { Write-Err "grok exited with status $($run.Code)." }
     [Console]::Error.WriteLine($run.Stderr)
     Remove-WorkDir
     exit 1

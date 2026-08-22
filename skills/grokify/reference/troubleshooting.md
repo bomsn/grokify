@@ -34,6 +34,83 @@ being called.
 installs `grok`, `grok.cmd`, and `grok.ps1` and only one of the three is
 executable from your shell.
 
+## Cowork or a cloud session cannot see the Grok CLI
+
+The sandbox is doing what it is designed to do. Cowork runs shell commands
+inside a Linux VM isolated from the host, so a CLI installed on the host is
+not on its PATH and cannot be put there. Its network goes through a proxy the
+sandbox cannot reconfigure, so `api.x.ai` is reachable only if an
+organization owner has allowed it.
+
+The supported way across that line is a plugin. A plugin's MCP server runs
+natively on the device rather than in the VM, which means it reaches the Grok
+CLI already installed and logged in there, and the machine's own network.
+Grokify ships as a plugin for exactly this reason. When it is installed as
+one, the skill finds a `grokify_rewrite` tool and uses it. A skill folder
+copied into `~/.claude/skills/` by hand has no bridge and cannot get one.
+
+`grokify_env` reports which side of the boundary the bridge ended up on. A
+`platform` of `win32` or `darwin` is the host. On Linux, check `hostname` and
+`home` against the machine - and if `api_x_ai` says the connection was
+intercepted by a TLS proxy, that is a sandbox answering, not the host.
+
+Node 18 or later has to be on PATH for the bridge to start. If the tool never
+appears after installing the plugin, that is the first thing to check.
+
+## No binary, and no way to install one (sandboxes, Cowork, cloud sessions)
+
+Exit 127 in a sandboxed session usually is not a PATH problem. A managed
+cloud session runs in a container that has no `grok` in it, cannot reach
+the machine where you installed one, and discards anything you install
+when the session ends. A CLI on your laptop is not reachable from there,
+however it was installed.
+
+Use the API route instead. It needs no binary:
+
+```bash
+mkdir -p ~/.grokify && printf '%s' 'xai-...' > ~/.grokify/api-key
+chmod 600 ~/.grokify/api-key
+```
+
+The runner reads `$GROKIFY_API_KEY_FILE`, then `~/.grokify/api-key`, then
+`./.grokify-key`, and falls back to `$GROKIFY_API_KEY` / `$XAI_API_KEY`.
+Prefer the file: a sandbox starts a fresh shell for every command, so an
+`export` does not survive to the next one, and a key pasted into a chat
+stays in that transcript.
+
+Confirm the route before blaming anything else - the header line names the
+transport it chose:
+
+```
+grokify: transport=api payload=34619 chars ...
+```
+
+`--transport api` forces the API route even when a binary is present.
+
+## The API request never connects (http 000, 403, or a CONNECT tunnel error)
+
+The host is blocked, not the key. Check the boundary directly:
+
+```bash
+curl -s -o /dev/null -w 'http=%{http_code}\n' --max-time 12 https://api.x.ai/v1/models
+```
+
+`http=000` with `CONNECT tunnel failed, response 403` is an egress
+allowlist rejecting `api.x.ai`. A 401 means the opposite - the host is
+reachable and the key is wrong.
+
+In the Claude desktop app the setting is Organization settings ->
+Capabilities -> Code execution -> Allow network egress, and it takes an
+organization owner. Note that adding `api.x.ai` to the additional-domain
+list is reported not to take effect while the top-level mode is "Package
+managers only"; "All domains" is the mode known to work. Wildcard entries
+have also been reported to match inconsistently, so add the literal host
+rather than `*.x.ai`.
+
+Nothing in the skill can route around a blocked host. Report the blocked
+hostname and stop; do not retry, and do not rewrite the draft in Claude
+instead.
+
 ## Not authenticated (exit 126)
 
 Run `grok` once interactively and sign in, or export `XAI_API_KEY` in the
@@ -188,7 +265,8 @@ path: open it and check the characters are intact there. If they are, the
 payload is fine and the corruption is on the way back; if they are not,
 whatever built the payload wrote it in the wrong encoding.
 
-A directory tree turning into `Ã”Ã¶Â£` is the signature.
+A directory tree whose box-drawing characters have become runs of three
+Latin-1 punctuation characters each is the signature.
 
 ## Windows: quotes come through mangled
 
