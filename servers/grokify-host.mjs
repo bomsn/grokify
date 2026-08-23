@@ -3,8 +3,8 @@
 //
 // Why this exists: Claude Cowork executes shell commands inside a sandboxed
 // Linux VM with a network allowlist it cannot reconfigure. The Grok CLI on the
-// user's machine is not reachable from there, and neither is api.x.ai unless an
-// organization owner opens the allowlist. Plugin MCP servers are the exception:
+// user's machine is not reachable from there. Plugin MCP servers are the
+// exception:
 // they run natively on the device, outside that sandbox, with the host's own
 // network and the user's own Grok login.
 //
@@ -207,39 +207,9 @@ function which(bin) {
   return null;
 }
 
-function probeHost(host) {
-  return new Promise((resolve) => {
-    const req = { hostname: host, path: '/v1/models', method: 'GET', timeout: 12000 };
-    import('node:https').then(({ request }) => {
-      const r = request(req, (res) => {
-        res.resume();
-        // 401 is the good answer here: it proves the host answered. Only a
-        // failure to connect at all means something is blocking the route.
-        resolve(res.statusCode === 200 ? 'reachable' : `reachable (http ${res.statusCode})`);
-      });
-      r.on('timeout', () => { r.destroy(); resolve('no answer within 12s'); });
-      r.on('error', (e) => {
-        const code = e.code || e.message;
-        // A substituted certificate means an intercepting proxy answered, which
-        // is what a sandbox does and what the host does not. Worth naming,
-        // because it says which side of the boundary this process is on.
-        if (code === 'SELF_SIGNED_CERT_IN_CHAIN' || code === 'UNABLE_TO_VERIFY_LEAF_SIGNATURE') {
-          return resolve(`intercepted by a TLS proxy (${code}) - this process is inside a sandbox, not on the host`);
-        }
-        if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') {
-          return resolve(`DNS did not resolve (${code}) - a sandbox allowlist is the usual cause`);
-        }
-        resolve(`unreachable (${code})`);
-      });
-      r.end();
-    }).catch((e) => resolve(`unreachable (${e.message})`));
-  });
-}
 
-async function envReport() {
+function envReport() {
   const grok = which('grok');
-  const keyFiles = [process.env.GROKIFY_API_KEY_FILE, join(homedir(), '.grokify', 'api-key')]
-    .filter(Boolean).filter((f) => { try { return existsSync(f); } catch { return false; } });
   return {
     running_on: {
       platform: platform(),
@@ -256,9 +226,6 @@ async function envReport() {
     plugin_root: PLUGIN_ROOT,
     runner_present: existsSync(join(SCRIPTS, IS_WINDOWS ? 'grokify.ps1' : 'grokify.sh')),
     grok_cli: grok || 'not found',
-    api_key: (process.env.XAI_API_KEY || process.env.GROKIFY_API_KEY) ? 'set in environment'
-             : keyFiles.length ? `file: ${keyFiles[0]}` : 'not set',
-    api_x_ai: await probeHost('api.x.ai'),
   };
 }
 
@@ -268,10 +235,9 @@ const TOOLS = [
   {
     name: 'grokify_env',
     description:
-      'Report where this server is running and what routes to Grok are available from there: '
-      + 'platform and hostname, whether the Grok CLI was found, whether an API key is set, and '
-      + 'whether api.x.ai answers. Call this first when a Grokify run fails, to tell a missing '
-      + 'CLI apart from a blocked network.',
+      'Report where this server is running and whether it can reach Grok from there: platform '
+      + 'and hostname, whether the Grok CLI was found, and whether the runner is in place. Call '
+      + 'this first when a Grokify run fails.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -291,7 +257,7 @@ const TOOLS = [
         model: { type: 'string', description: 'Optional model override, e.g. grok-4.6.' },
         transport: {
           type: 'string',
-          enum: ['auto', 'api', 'inline', 'rules', 'file'],
+          enum: ['auto', 'inline', 'rules', 'file'],
           description: 'Optional transport override. Leave unset unless diagnosing.',
         },
         timeout_sec: { type: 'integer', description: 'Optional ceiling in seconds for the rewrite itself.' },
@@ -359,7 +325,7 @@ async function handle(msg) {
 
       if (name === 'grokify_env') {
         try {
-          return textResult(id, JSON.stringify(await envReport(), null, 2));
+          return textResult(id, JSON.stringify(envReport(), null, 2));
         } catch (err) {
           return textResult(id, `grokify_env failed: ${err.message}`, true);
         }

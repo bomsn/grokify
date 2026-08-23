@@ -21,7 +21,7 @@
 #                       levels vary by model; `grok models` lists them.
 #   --timeout SECONDS   Default 300
 #   --bin PATH          grok binary name or full path, when PATH does not have it
-#   --transport MODE    auto | api | inline | rules | file (default auto)
+#   --transport MODE    auto | inline | rules | file (default auto)
 #   --raw               Skip output cleanup; keep grok's output byte for byte
 #   --keep              Keep the working directory and print its path
 #   --check             Report binary, version, and platform defaults, then exit
@@ -52,7 +52,6 @@ PAYLOAD=""
 OUT=""
 MODEL="${GROKIFY_MODEL:-}"
 EFFORT="${GROKIFY_EFFORT:-}"
-API_MODEL_DEFAULT="${GROKIFY_API_MODEL:-grok-4.6}"
 TIMEOUT="${GROKIFY_TIMEOUT:-}"
 BIN="${GROKIFY_BIN:-grok}"
 TRANSPORT="auto"
@@ -98,7 +97,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-case "$TRANSPORT" in auto|api|inline|rules|file) ;; *) die "--transport must be auto, api, inline, rules, or file" "$E_USAGE" ;; esac
+case "$TRANSPORT" in auto|inline|rules|file) ;; *) die "--transport must be auto, inline, rules, or file" "$E_USAGE" ;; esac
 
 # --- find grok --------------------------------------------------------------
 #
@@ -131,29 +130,9 @@ find_grok() {
   return 1
 }
 
-# A sandbox has no way to receive an exported variable: each shell call starts
-# fresh. So a key may also live in a file, which survives for the session.
-read_key_file() {
-  local f
-  for f in "${GROKIFY_API_KEY_FILE:-}" "$HOME/.grokify/api-key" "./.grokify-key"; do
-    [ -n "$f" ] && [ -r "$f" ] && { head -n 1 "$f" | tr -d '\r\n[:space:]'; return 0; }
-  done
-  return 1
-}
-API_KEY="${GROKIFY_API_KEY:-${XAI_API_KEY:-}}"
-[ -n "$API_KEY" ] || API_KEY="$(read_key_file || true)"
-API_URL="${GROKIFY_API_URL:-https://api.x.ai/v1/chat/completions}"
-
 BIN_PATH="$(find_grok "$BIN")" || BIN_PATH=""
 
-# The CLI is one way to reach Grok, not the only one. Where there is no binary
-# but there is an API key, talk to the API directly. That is the only route
-# open inside a sandbox that has no CLI installed, and it is faster everywhere
-# else: a rewrite is one completion, and an agent CLI spends a session
-# start-up, a tool loop and a transcript on top of it.
-if [ -z "$BIN_PATH" ] && [ -n "$API_KEY" ] && { [ "$TRANSPORT" = "auto" ] || [ "$TRANSPORT" = "api" ]; }; then
-  TRANSPORT="api"
-elif [ -z "$BIN_PATH" ]; then
+if [ -z "$BIN_PATH" ]; then
   cat >&2 <<MISSING
 grokify: '$BIN' was not found on PATH, and is not in any of the directories the
 Grok CLI normally installs to:
@@ -175,19 +154,6 @@ Then pass it per run with --bin /full/path/to/grok, or set it once:
 Install the Grok CLI:
   curl -fsSL https://x.ai/cli/install.sh | bash
   Windows PowerShell: irm https://x.ai/cli/install.ps1 | iex
-
-Or skip the CLI entirely and use an API key, which needs no install at all:
-
-  export XAI_API_KEY=...     (get one at https://console.x.ai)
-
-In a sandbox - Cowork, a cloud session, a container - there is no CLI to find
-and no way to install one, and an export does not survive to the next command.
-Write the key to a file instead; this script reads the first one it can:
-
-  \$GROKIFY_API_KEY_FILE, then \$HOME/.grokify/api-key, then ./.grokify-key
-
-  mkdir -p ~/.grokify && printf '%s' 'xai-...' > ~/.grokify/api-key
-  chmod 600 ~/.grokify/api-key
 MISSING
   exit "$E_NOBIN"
 fi
@@ -203,34 +169,6 @@ leash() {
   else "${@:2}" </dev/null 2>&1; fi
 }
 
-probe_endpoint() {
-  # Report whether the host answers at all. A blocked egress allowlist and a
-  # bad key look nothing alike: the first never connects, the second returns
-  # 401 from a host that is plainly reachable.
-  command -v curl >/dev/null 2>&1 || { printf 'no curl available to test with\n'; return; }
-  local host code
-  host="$(printf '%s' "$API_URL" | sed -e 's#^https\?://##' -e 's#/.*##')"
-  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 15 \
-            -H "Authorization: Bearer $API_KEY" "https://$host/v1/models" 2>/dev/null)"
-  case "$code" in
-    200) printf 'reachable, key accepted\n' ;;
-    401|403) printf 'reachable, but the key was rejected (http %s)\n' "$code" ;;
-    000|"") printf 'BLOCKED - no connection to %s.\n' "$host"
-            printf '              A sandbox egress allowlist has to include %s.\n' "$host"
-            printf '              See reference/troubleshooting.md.\n' ;;
-    *)   printf 'http %s\n' "$code" ;;
-  esac
-}
-
-if [ "$CHECK" -eq 1 ] && [ "$TRANSPORT" = "api" ]; then
-  printf 'route:        xAI API (no CLI binary found)\n'
-  printf 'endpoint:     %s\n' "$API_URL"
-  printf 'api key:      set (%s chars)\n' "${#API_KEY}"
-  printf 'model:        %s\n' "${MODEL:-$API_MODEL_DEFAULT}"
-  printf 'connection:   '; probe_endpoint
-  exit 0
-fi
-
 if [ "$CHECK" -eq 1 ]; then
   VERSION="$(leash 10 "$BIN_PATH" version | head -n 1)"
   [ -n "$VERSION" ] || VERSION="$(leash 10 "$BIN_PATH" --version | head -n 1)"
@@ -241,7 +179,6 @@ if [ "$CHECK" -eq 1 ]; then
   printf 'file flags:   %s\n' "${GROKIFY_FILE_ARGS:-$FILE_ARGS_DEFAULT}"
   printf 'timeout:      %s\n' "${TIMEOUT_BIN:-none available, running unbounded}"
   printf 'inline limit: %s characters\n' "$MAX_INLINE"
-  [ -n "$API_KEY" ] && printf 'api key:      set, so --transport api is available\n'
   MODELS="$(leash 20 "$BIN_PATH" models | head -n 20)"
   if [ -n "$MODELS" ]; then
     printf 'models:\n%s\n' "$MODELS"
@@ -352,13 +289,8 @@ if [ -n "${GROKIFY_EXTRA_ARGS:-}" ]; then
   ARGS+=("${_extra[@]}")
 fi
 
-if [ "$TRANSPORT" = "api" ]; then
-  printf 'grokify: transport=api payload=%s chars timeout=%ss endpoint=%s model=%s\n' \
-    "$PAYLOAD_CHARS" "$TIMEOUT" "$API_URL" "${MODEL:-$API_MODEL_DEFAULT}" >&2
-else
-  printf 'grokify: transport=%s payload=%s chars prompt=%s chars timeout=%ss binary=%s\n' \
-    "$TRANSPORT" "$PAYLOAD_CHARS" "${#PROMPT}" "$TIMEOUT" "$BIN_PATH" >&2
-fi
+printf 'grokify: transport=%s payload=%s chars prompt=%s chars timeout=%ss binary=%s\n' \
+  "$TRANSPORT" "$PAYLOAD_CHARS" "${#PROMPT}" "$TIMEOUT" "$BIN_PATH" >&2
 
 # On the rules path the brief reaches the model through project rules. A build
 # that does not load them would rewrite from the task line alone, which reads
@@ -405,91 +337,13 @@ run_grok() {
   return $rc
 }
 
-# A rewrite is one completion. Talking to the API directly skips the session
-# start-up, the tool loop and the transcript an agent CLI spends on top of it,
-# and it is the only route inside a sandbox with no CLI installed.
-run_api() {
-  command -v curl >/dev/null 2>&1 || die "the api transport needs curl" 1
-  command -v python3 >/dev/null 2>&1 || die "the api transport needs python3 to build and read JSON" 1
-
-  # System gets the standing rules, user gets the material and the task. That
-  # is the split the payload was already written for.
-  local split_line body
-  split_line=$(grep -n '^</output_format>$' "$PAYLOAD" | head -n 1 | cut -d: -f1)
-  [ -n "$split_line" ] || split_line=0
-
-  body="$WORKDIR/request.json"
-  SPLIT_LINE="$split_line" API_MODEL="${MODEL:-$API_MODEL_DEFAULT}" \
-  MAX_TOKENS="${GROKIFY_API_MAX_TOKENS:-32000}" \
-  python3 - "$PAYLOAD" "$body" <<'PYEOF'
-import json, os, sys
-payload = open(sys.argv[1], encoding='utf-8').read()
-lines = payload.split('\n')
-n = int(os.environ['SPLIT_LINE'])
-if n > 0:
-    system, user = '\n'.join(lines[:n]), '\n'.join(lines[n:])
-else:
-    system, user = '', payload
-messages = []
-if system.strip():
-    messages.append({'role': 'system', 'content': system})
-messages.append({'role': 'user', 'content': user})
-req = {'model': os.environ['API_MODEL'], 'messages': messages,
-       'max_tokens': int(os.environ['MAX_TOKENS'])}
-open(sys.argv[2], 'w', encoding='utf-8').write(json.dumps(req))
-PYEOF
-
-  heartbeat & HB_PID=$!
-  curl -sS --max-time "$TIMEOUT" "$API_URL" \
-    -H 'Content-Type: application/json' \
-    -H "Authorization: Bearer $API_KEY" \
-    --data-binary "@$body" > "$WORKDIR/response.json" 2>"$ERRLOG"
-  local rc=$?
-  kill "$HB_PID" 2>/dev/null; wait "$HB_PID" 2>/dev/null
-
-  [ "$rc" -eq 28 ] && return "$E_TIMEOUT"
-  if [ "$rc" -ne 0 ]; then
-    printf 'grokify: could not reach %s\n' "$API_URL" >&2
-    [ -s "$ERRLOG" ] && cat "$ERRLOG" >&2
-    printf '\nIf this is a sandbox, its egress allowlist may not include the host.\n' >&2
-    return 1
-  fi
-
-  python3 - "$WORKDIR/response.json" "$RESULT_ABS" <<'PYEOF'
-import json, sys
-raw = open(sys.argv[1], encoding='utf-8').read()
-try:
-    data = json.loads(raw)
-except Exception:
-    sys.stderr.write('grokify: the endpoint did not return JSON:\n' + raw[:800] + '\n')
-    sys.exit(1)
-if 'error' in data:
-    err = data['error']
-    msg = err.get('message', json.dumps(err)) if isinstance(err, dict) else str(err)
-    sys.stderr.write('grokify: the API refused the request:\n  ' + msg + '\n')
-    sys.exit(1)
-try:
-    text = data['choices'][0]['message']['content']
-except Exception:
-    sys.stderr.write('grokify: unexpected response shape:\n' + raw[:800] + '\n')
-    sys.exit(1)
-open(sys.argv[2], 'w', encoding='utf-8').write(text)
-PYEOF
-  return $?
-}
-
-if [ "$TRANSPORT" = "api" ]; then
-  run_api
-  RC=$?
-else
-  run_grok "${ARGS[@]}"
-  RC=$?
-fi
+run_grok "${ARGS[@]}"
+RC=$?
 
 # A build that does not carry one of the automation flags rejects the whole
 # command line. Retry once with nothing but the prompt rather than reporting a
 # flag error as a rewrite failure.
-if [ "$TRANSPORT" != "api" ] && [ "$RC" -ne 0 ] && [ "$RC" -ne "$E_TIMEOUT" ] \
+if [ "$RC" -ne 0 ] && [ "$RC" -ne "$E_TIMEOUT" ] \
    && grep -qiE 'unexpected argument|unknown (flag|option|argument)|invalid (flag|option)|unrecognized' "$ERRLOG" 2>/dev/null; then
   printf 'grokify: this build rejected one of the automation flags; retrying with -p only.\n' >&2
   MIN_ARGS=()
@@ -508,22 +362,14 @@ if [ "$RC" -eq "$E_TIMEOUT" ]; then
 fi
 
 if [ "$RC" -ne 0 ]; then
-  if grep -qiE 'unauthori|not authenticated|invalid api key|missing api key|no api key|401|sign in|login required' "$ERRLOG" 2>/dev/null; then
-    if [ "$TRANSPORT" = "api" ]; then
-      printf 'grokify: the API rejected the key. Check XAI_API_KEY; keys are issued at https://console.x.ai\n\n' >&2
-    else
-      printf 'grokify: grok is installed but not authenticated.\n' >&2
-      # shellcheck disable=SC2016  # backticks are literal here
-      printf 'Run `grok login` and sign in, or `grok login --device-auth` on a headless box.\n\n' >&2
-    fi
+  if grep -qiE 'unauthori|not authenticated|401|sign in|login required' "$ERRLOG" 2>/dev/null; then
+    printf 'grokify: grok is installed but not authenticated.\n' >&2
+    # shellcheck disable=SC2016  # backticks are literal here
+    printf 'Run `grok login` and sign in, or `grok login --device-auth` on a headless box.\n\n' >&2
     cat "$ERRLOG" >&2
     exit "$E_AUTH"
   fi
-  if [ "$TRANSPORT" = "api" ]; then
-    printf 'grokify: the API call failed.\n\n' >&2
-  else
-    printf 'grokify: grok exited with status %s.\n\n' "$RC" >&2
-  fi
+  printf 'grokify: grok exited with status %s.\n\n' "$RC" >&2
   [ -s "$ERRLOG" ] && cat "$ERRLOG" >&2
   exit 1
 fi

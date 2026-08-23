@@ -17,34 +17,10 @@ voice the user is paying Grok to remove.
 
 ## Requirements
 
-A route to Grok. There are three, and the first one that exists wins.
-
-**The host bridge.** Any available tool whose name ends in
-`grokify_rewrite` means it is already there and nothing else is needed -
-it runs on the user's machine and uses the Grok CLI already installed and
-logged in there. Step 5 covers how to find and call it. Everything below
-is for a session with no bridge, or a machine with no CLI.
-
-The bridge takes a moment to start after the plugin is installed. If the
-tool is not there yet, it will be shortly; nothing needs configuring.
-
-**An API key.** `XAI_API_KEY` in the environment and nothing else. No
-install, no login, no command-line limits, and it is the faster route: a
-rewrite is one completion, where an agent CLI spends a session start-up, a
-tool loop and a transcript on top of it.
-
-A sandbox usually has no way to keep an exported variable between
-commands, so write the key to a file instead and the runner will find it:
-`$GROKIFY_API_KEY_FILE`, then `~/.grokify/api-key`, then `./.grokify-key`.
-A key pasted into a chat also lives in that transcript; a file is the safer
-place for it.
-
-A sandbox with no host bridge also has to be allowed to reach `api.x.ai`.
-If the request never connects, its egress allowlist does not include that
-host; see `reference/troubleshooting.md`. Nothing in the skill can work
-around a blocked host, so say so rather than retrying.
-
-**Or the `grok` binary**, on PATH and authenticated. Either CLI works:
+**The `grok` CLI**, installed and signed in. That is the whole dependency.
+How the user authenticates it is their business - an interactive login or
+an account key in their own environment, Grokify neither asks nor cares.
+It never handles credentials and never calls the API itself.
 
 - xAI Grok CLI: `curl -fsSL https://x.ai/cli/install.sh | bash`
   (Windows: `irm https://x.ai/cli/install.ps1 | iex`)
@@ -52,6 +28,11 @@ around a blocked host, so say so rather than retrying.
 
 Both expose `grok -p "<prompt>"`, the only documented headless entry
 point, and the only CLI interface Grokify uses.
+
+**A route to that CLI.** In a local shell the runner calls it directly. In
+a sandboxed session - Cowork, a cloud session - the shell cannot see the
+user's machine, so the plugin's host bridge carries the call instead. Step
+5 covers both.
 
 Grok is the only model Grokify ever calls, by either route. Never
 substitute another CLI, and never fall back to rewriting the draft here.
@@ -96,7 +77,6 @@ reply in auto mode.
 | `--lang <language>` | Output language. Defaults to the draft's language. |
 | `--model <name>` | Passed to `grok -m`. |
 | `--effort <level>` | Passed to `grok --effort`. Levels vary by model; `--check` lists what the account reaches. |
-| `--transport api` | Force the API route even where a binary exists. Faster, and immune to command-line limits. |
 | `--bin <path>` | Full path to the grok binary, when PATH does not have it. |
 | `--out <path>` | Also write the result to this file. |
 | `--diff` | Print a short list of what changed after the result. |
@@ -314,8 +294,8 @@ The script exits non-zero and prints the real error. Surface it.
 
 | Exit | Meaning | Response |
 |---|---|---|
-| 127 | No route to Grok | Neither a binary nor an API key. In a sandbox the answer is `XAI_API_KEY`, since no binary can be installed there. On a workstation, ask for `which grok` or `where.exe grok` output rather than guessing a path. |
-| 126 | Rejected credentials | An API key the endpoint refused, or a CLI that has not signed in. The message says which. |
+| 127 | No `grok` binary | Ask for `which grok` or `where.exe grok` output rather than guessing a path. In a sandbox, the host bridge is the route, not a local install. |
+| 126 | Not signed in | The CLI is installed but not authenticated. `grok login`, or `grok login --device-auth` on a headless box. |
 | 124 | Timed out | Suggest a longer `--timeout`, or a shorter draft. |
 | 3 | Empty output | Re-run once with `--keep` and report the payload path. |
 | other | Grok returned an error | Print stderr as-is. |

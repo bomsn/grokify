@@ -153,15 +153,14 @@ Cowork and cloud sessions run shell commands inside a sandboxed Linux VM,
 isolated from your machine, behind a network proxy the sandbox cannot
 reconfigure. A skill is instructions plus scripts, and those scripts run
 in that VM. From there your Grok CLI is not on the PATH and cannot be put
-there, and `api.x.ai` is reachable only if an administrator has allowed
-it. A skill archive uploaded to the desktop app installs cleanly and then
+there. A skill archive uploaded to the desktop app installs cleanly and then
 fails at the first run, which is the worst possible outcome: it looks
 installed.
 
 A plugin can carry an MCP server, and a plugin's MCP server runs natively
 on the device rather than in the VM. That is the supported way across the
 line. So the bridge reaches the Grok CLI you already have installed and
-logged in, and the machine's own network, with nothing to configure.
+signed in, with nothing to configure.
 
 The skill still lives in `skills/grokify/` and still holds every rule
 about what Grok gets and what it must not change. The plugin is what
@@ -173,49 +172,26 @@ server running. You lose Cowork, and that is the whole trade.
 
 ## Routes to Grok
 
-Three, and the first one that exists wins.
-
-**The host bridge**, which the plugin installs. Nothing to configure: it
-runs on your machine and uses the Grok login already there. This is the
-only route that works inside Cowork without an administrator opening the
-network.
-
-**An API key.** Set `XAI_API_KEY` and the runner posts one chat completion
-straight to the API. No CLI, no login, no command-line limits, and it is
-the fastest route: a rewrite is one completion, where an agent CLI spends
-a session start-up, a tool loop and a transcript on top of it.
-
-```bash
-export XAI_API_KEY=...        # keys are issued at https://console.x.ai
-```
-
-In a sandbox, put the key in a file rather than the environment - every
-command gets a fresh shell there, so an `export` is gone by the next one:
-
-```bash
-mkdir -p ~/.grokify && printf '%s' 'xai-...' > ~/.grokify/api-key
-chmod 600 ~/.grokify/api-key
-```
-
-The runner reads `$GROKIFY_API_KEY_FILE`, then `~/.grokify/api-key`, then
-`./.grokify-key`, before falling back to the environment. Inside a sandbox
-this route also needs `api.x.ai` on the egress allowlist, which on Claude
-Desktop is an organization-owner setting on a Team or Enterprise plan;
-[`troubleshooting.md`](skills/grokify/reference/troubleshooting.md) has the
-one-line check. The bridge sidesteps all of that.
-
-**Or the Grok CLI**, which the bridge uses and which the runner uses
-directly when you are in your own shell. Either CLI works:
+One dependency: the `grok` CLI, installed and signed in. Grokify shells out
+to it and reads what comes back. It never handles your credentials and
+never calls the xAI API itself - how you authenticate the CLI, by
+interactive login or an account key in your own environment, is between you
+and it.
 
 - xAI: `curl -fsSL https://x.ai/cli/install.sh | bash`
   (Windows: `irm https://x.ai/cli/install.ps1 | iex`)
 - superagent: `curl -fsSL https://raw.githubusercontent.com/superagent-ai/grok-cli/main/install.sh | bash`
 
-Run `grok` once and sign in, or set `XAI_API_KEY`. Then check the wiring:
+Run `grok login` once, then check the wiring:
 
 ```bash
 bash skills/grokify/scripts/grokify.sh --check
 ```
+
+Two ways the call gets there. In your own shell the runner invokes `grok`
+directly. In Cowork or a cloud session the shell cannot see your machine,
+so the plugin's host bridge makes the call instead - same CLI, same login,
+nothing to configure.
 
 ## Usage
 
