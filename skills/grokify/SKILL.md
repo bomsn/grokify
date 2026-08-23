@@ -213,16 +213,33 @@ or namespaced through the desktop bridge, as in
 not on an exact string, and do not conclude the bridge is absent because
 the bare name is missing.
 
-Call it with the assembled payload and use what it returns. It runs on the
-user's own machine, outside any sandbox, so it reaches a Grok CLI
-installed there and the machine's own network, and it needs nothing
-configured beyond the user's existing Grok login. Prefer it whenever it
-exists, including on a local machine, where it saves a shell round trip.
+Call it with the assembled payload. It runs on the user's own machine,
+outside any sandbox, so it reaches a Grok CLI installed there and the
+machine's own network, and it needs nothing configured beyond the user's
+existing Grok login. Prefer it whenever it exists, including on a local
+machine, where it saves a shell round trip.
 
-If it returns an error, call the matching `grokify_env` once and report
-what it says. That distinguishes a missing CLI from a blocked network,
-which need opposite fixes, and reports which side of the sandbox boundary
-the tool is running on.
+**It may answer with a job instead of the text, and that is success.** A
+rewrite through the CLI is an agent session that routinely runs for
+minutes, far longer than one tool call is allowed to take, so the tool
+hands back JSON like this rather than holding the call open:
+
+```json
+{ "status": "running", "job_id": "job-1", "elapsed_sec": 40 }
+```
+
+Collect it with the matching `grokify_result`, passing that `job_id`. That
+call waits too, so it returns the moment the rewrite lands rather than
+reporting `running` straight back. If it does report `running` again, call
+it again, and keep going until it returns the text. Ten minutes is a
+normal rewrite. Do not treat a job as a failure, do not start a second
+rewrite over the top of one still running, and do not fall back to
+rewriting the draft here because the first call did not return text.
+
+If either call returns an actual error, call the matching `grokify_env`
+once and report what it says. That distinguishes a missing CLI from a
+blocked network, which need opposite fixes, and reports which side of the
+sandbox boundary the tool is running on.
 
 **Otherwise the runner**, which is what a plain skill install has. The
 runner lives beside this file, and the shell's working directory is the

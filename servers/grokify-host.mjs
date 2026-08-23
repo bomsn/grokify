@@ -55,6 +55,88 @@ function runnerCommand(payloadPath, outPath, opts) {
   return { command: process.env.GROKIFY_BASH || 'bash', args };
 }
 
+// --- jobs --------------------------------------------------------------------
+//
+// A rewrite through the Grok CLI is an agent session: it can run for minutes.
+// The MCP transport this server is reached through gives a tool call far less
+// than that before it gives up, and that ceiling is not ours to raise. So a
+// call never waits on the work. It starts a job, waits a little in case the
+// work is quick, and otherwise hands back an id to collect later.
+//
+// Collection long-polls rather than returning immediately, so a ten-minute
+// rewrite costs a handful of calls instead of hundreds of empty ones.
+
+const JOBS = new Map();
+let JOB_SEQ = 0;
+
+// Comfortably inside a 60-second transport ceiling, with room for the round
+// trip on either side.
+const WAIT_DEFAULT = 40;
+const WAIT_MAX = 50;
+
+function clampWait(value, fallback = WAIT_DEFAULT) {
+  const n = Number.isFinite(value) ? value : fallback;
+  return Math.max(0, Math.min(WAIT_MAX, n));
+}
+
+function startJob(payloadText, opts) {
+  const id = `job-${++JOB_SEQ}`;
+  const job = { id, status: 'running', startedAt: Date.now(), waiters: [] };
+  JOBS.set(id, job);
+
+  runRunner(payloadText, opts).then((res) => {
+    job.status = res.ok ? 'done' : 'failed';
+    job.result = res;
+    job.finishedAt = Date.now();
+    for (const resolve of job.waiters.splice(0)) resolve();
+  });
+
+  return job;
+}
+
+function settle(job, seconds) {
+  // Resolve as soon as the job finishes, or when the wait runs out - whichever
+  // comes first.
+  if (job.status !== 'running' || seconds <= 0) return Promise.resolve();
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = () => { if (!done) { done = true; clearTimeout(timer); resolve(); } };
+    const timer = setTimeout(finish, seconds * 1000);
+    if (timer.unref) timer.unref();
+    job.waiters.push(finish);
+  });
+}
+
+function elapsedSeconds(job) {
+  return Math.round(((job.finishedAt || Date.now()) - job.startedAt) / 1000);
+}
+
+function jobReply(job) {
+  if (job.status === 'running') {
+    return {
+      pending: true,
+      text: JSON.stringify({
+        status: 'running',
+        job_id: job.id,
+        elapsed_sec: elapsedSeconds(job),
+        next: `Call grokify_result with job_id "${job.id}". A rewrite through the CLI `
+             + `often takes several minutes; keep collecting until it reports done.`,
+      }, null, 2),
+    };
+  }
+
+  const res = job.result || {};
+  if (job.status === 'done') {
+    // Finished jobs are dropped once collected. Nothing here is worth keeping.
+    JOBS.delete(job.id);
+    return { pending: false, text: res.text, isError: false };
+  }
+
+  JOBS.delete(job.id);
+  const detail = res.log ? `\n\n${res.log}` : '';
+  return { pending: false, text: `${res.error || 'the rewrite failed'}${detail}`, isError: true };
+}
+
 function runRunner(payloadText, opts) {
   return new Promise((resolve) => {
     const dir = mkdtempSync(join(tmpdir(), 'grokify-host-'));
@@ -195,10 +277,13 @@ const TOOLS = [
   {
     name: 'grokify_rewrite',
     description:
-      'Send a fully built Grokify payload to Grok from the host machine and return the rewritten '
-      + 'text verbatim. Takes the complete payload, already assembled from the Grokify skill\'s '
-      + 'payload template - this tool does not build prompts. Runs outside any sandbox, so it '
-      + 'reaches a locally installed Grok CLI and the host network.',
+      'Start a rewrite on the host machine and return the rewritten text verbatim. Takes the '
+      + 'complete payload, already assembled from the Grokify skill\'s payload template - this '
+      + 'tool does not build prompts. Runs outside any sandbox, so it reaches a locally installed '
+      + 'Grok CLI and the host network. A rewrite through the CLI can take several minutes, longer '
+      + 'than one tool call is allowed to wait, so this returns the finished text when the work is '
+      + 'quick and otherwise returns a job_id to collect with grokify_result. Returning a job_id '
+      + 'is normal progress, not a failure - collect it rather than starting over.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -209,9 +294,34 @@ const TOOLS = [
           enum: ['auto', 'api', 'inline', 'rules', 'file'],
           description: 'Optional transport override. Leave unset unless diagnosing.',
         },
-        timeout_sec: { type: 'integer', description: 'Optional ceiling in seconds.' },
+        timeout_sec: { type: 'integer', description: 'Optional ceiling in seconds for the rewrite itself.' },
+        wait_sec: {
+          type: 'integer',
+          description: 'How long this call may wait for the rewrite before handing back a job_id. '
+                     + 'Defaults to 40 and is capped at 50, to stay inside the tool-call ceiling.',
+        },
       },
       required: ['payload'],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: 'grokify_result',
+    description:
+      'Collect a rewrite started by grokify_rewrite. Waits for the job to finish, up to wait_sec, '
+      + 'and returns the rewritten text once it is ready. While the rewrite is still running it '
+      + 'reports status and elapsed time instead - call it again, as many times as it takes. Each '
+      + 'call waits, so a long rewrite costs a few calls rather than constant polling.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        job_id: { type: 'string', description: 'The job_id returned by grokify_rewrite.' },
+        wait_sec: {
+          type: 'integer',
+          description: 'How long this call may wait. Defaults to 40 and is capped at 50.',
+        },
+      },
+      required: ['job_id'],
       additionalProperties: false,
     },
   },
@@ -259,14 +369,27 @@ async function handle(msg) {
         if (typeof args.payload !== 'string' || !args.payload.trim()) {
           return textResult(id, 'payload is required and must be a non-empty string', true);
         }
-        const res = await runRunner(args.payload, {
+        const job = startJob(args.payload, {
           model: args.model,
           transport: args.transport,
           timeoutSec: args.timeout_sec,
         });
-        if (res.ok) return textResult(id, res.text);
-        const detail = res.log ? `\n\n${res.log}` : '';
-        return textResult(id, `${res.error}${detail}`, true);
+        await settle(job, clampWait(args.wait_sec));
+        const reply = jobReply(job);
+        return textResult(id, reply.text, reply.isError === true);
+      }
+
+      if (name === 'grokify_result') {
+        const job = JOBS.get(args.job_id);
+        if (!job) {
+          return textResult(id,
+            `no job "${args.job_id}". A finished job is dropped once collected, so this is `
+            + 'either already returned or from an earlier run of the server. Start a new rewrite.',
+            true);
+        }
+        await settle(job, clampWait(args.wait_sec));
+        const reply = jobReply(job);
+        return textResult(id, reply.text, reply.isError === true);
       }
 
       return fail(id, -32602, `unknown tool: ${name}`);

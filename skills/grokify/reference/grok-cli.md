@@ -20,6 +20,18 @@ namespaced by the host, along the lines of
 `mcp__remote-devices__plugin_grokify_grokify-host__grokify_rewrite`, so match
 on the suffix rather than the bare name.
 
+The bridge is asynchronous. A tool call has far less time than a CLI rewrite
+needs, and that ceiling belongs to the transport, not to Grokify, so
+`grokify_rewrite` starts the work and returns the text only if it finishes
+quickly. Otherwise it returns a `job_id`, and `grokify_result` collects it.
+Both calls wait up to 40 seconds by default, capped at 50, so a ten-minute
+rewrite costs a handful of calls rather than constant polling. A returned
+`job_id` is progress, not an error.
+
+A finished job is dropped once collected, so collecting the same `job_id`
+twice reports that it is gone. Jobs live in the server process and do not
+survive a restart of the desktop app.
+
 The server needs Node 18 or later on PATH. It also takes a few seconds to come
 up after an install, so a tool that is missing immediately afterwards is
 usually just early. `grokify_env` reports where it is running, whether it found
