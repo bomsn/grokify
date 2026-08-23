@@ -102,21 +102,38 @@ One artifact. Grokify is a plugin, not a loose skill, and that is a
 deliberate choice rather than a packaging preference - see
 [Why a plugin](#why-a-plugin) below.
 
+**Claude Code.** Two commands in your shell, nothing to clone or build:
+
+```bash
+claude plugin marketplace add https://github.com/bomsn/grokify.git
+claude plugin install grokify@grokify
+```
+
+That installs to user scope, which means every project on the machine. Add
+`--scope project` to commit it to one repository for your collaborators
+instead, or `--scope local` for one repository just for you.
+
+The same two commands work inside a session as `/plugin marketplace add`
+and `/plugin install`, where you pick the scope from a menu. If the install
+summary says `Run /reload-plugins to activate.`, run that.
+
+Use the full `https://` URL rather than the `bomsn/grokify` shorthand. The
+shorthand clones over SSH by default, which needs a GitHub key loaded in
+`ssh-agent`; the URL clones over HTTPS and this repository is public, so it
+needs nothing.
+
+**Claude desktop and Cowork.** Build the archive and open it:
+
 ```bash
 git clone https://github.com/bomsn/grokify
 bash grokify/tools/package.sh        # or: pwsh grokify/tools/package.ps1
 ```
 
-That writes `dist/grokify.plugin`. Open it in the Claude desktop app and
-accept it. You get `/grokify:grokify`, and it works in Cowork, in cloud
+That writes `dist/grokify.plugin`. Open it in the desktop app and accept
+it.
+
+Either way you get `/grokify:grokify`, and it works in Cowork, in cloud
 sessions, and in local Claude Code sessions alike.
-
-**Straight from GitHub**, without cloning or building:
-
-```
-/plugin marketplace add bomsn/grokify
-/plugin install grokify@grokify
-```
 
 Node 18 or later has to be on your PATH, because that is what runs the
 bridge. Without it the plugin still installs and the skill still works
