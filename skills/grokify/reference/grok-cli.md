@@ -7,6 +7,24 @@ the tool has exactly one engine and no menu.
 There are two ways to reach it, and the runner takes whichever is
 available.
 
+## The host bridge
+
+The plugin ships an MCP server, `servers/grokify-host.mjs`, which runs on the
+machine rather than in a sandbox. Installing the plugin is the whole setup: the
+server starts with it, finds the Grok CLI already installed and logged in
+there, and exposes a tool ending in `grokify_rewrite`.
+
+It runs on the device even when the session itself is executing in the cloud,
+which is what makes Grokify work in Cowork at all. The tool then arrives
+namespaced by the host, along the lines of
+`mcp__remote-devices__plugin_grokify_grokify-host__grokify_rewrite`, so match
+on the suffix rather than the bare name.
+
+The server needs Node 18 or later on PATH. It also takes a few seconds to come
+up after an install, so a tool that is missing immediately afterwards is
+usually just early. `grokify_env` reports where it is running, whether it found
+the CLI, and whether the network answered.
+
 ## The API, with no CLI at all
 
 Set `XAI_API_KEY` and there is nothing to install:

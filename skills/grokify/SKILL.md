@@ -19,11 +19,14 @@ voice the user is paying Grok to remove.
 
 A route to Grok. There are three, and the first one that exists wins.
 
-**The host bridge**, which is what the plugin install provides. A
-`grokify_rewrite` tool means it is already there and nothing else is
-needed - it runs on the user's machine and uses the Grok CLI already
-installed and logged in there. Step 5 covers how to call it. Everything
-below is for a plain skill install, or for a machine with no CLI.
+**The host bridge.** Any available tool whose name ends in
+`grokify_rewrite` means it is already there and nothing else is needed -
+it runs on the user's machine and uses the Grok CLI already installed and
+logged in there. Step 5 covers how to find and call it. Everything below
+is for a session with no bridge, or a machine with no CLI.
+
+The bridge takes a moment to start after the plugin is installed. If the
+tool is not there yet, it will be shortly; nothing needs configuring.
 
 **An API key.** `XAI_API_KEY` in the environment and nothing else. No
 install, no login, no command-line limits, and it is the faster route: a
@@ -202,19 +205,24 @@ tag teaches the model that reference material is optional and unimportant.
 Two ways to reach Grok. Check for the first before falling back to the
 second; they take the same payload and produce the same result.
 
-**A host tool, if one is present.** When a `grokify_rewrite` tool is
-available, call it with the assembled payload and use what it returns.
-That tool runs on the user's own machine, outside any sandbox, so it
-reaches a Grok CLI installed there and the machine's own network. In a
-sandboxed session - Cowork, a cloud session - it is the only route that
-works, and it needs nothing configured beyond the user's existing Grok
-login. Prefer it whenever it exists, including on a local machine, where
-it saves a shell round trip.
+**A host tool, if one is present.** Look for a tool whose name ends in
+`grokify_rewrite`. It arrives under different prefixes depending on how the
+bridge was registered - bare as `grokify_rewrite` from the plugin itself,
+or namespaced through the desktop bridge, as in
+`mcp__remote-devices__grokify-host__grokify_rewrite`. Match on the suffix,
+not on an exact string, and do not conclude the bridge is absent because
+the bare name is missing.
 
-If it returns an error, call `grokify_env` once and report what it says.
-That distinguishes a missing CLI from a blocked network, which need
-opposite fixes, and reports which side of the sandbox boundary the tool is
-running on.
+Call it with the assembled payload and use what it returns. It runs on the
+user's own machine, outside any sandbox, so it reaches a Grok CLI
+installed there and the machine's own network, and it needs nothing
+configured beyond the user's existing Grok login. Prefer it whenever it
+exists, including on a local machine, where it saves a shell round trip.
+
+If it returns an error, call the matching `grokify_env` once and report
+what it says. That distinguishes a missing CLI from a blocked network,
+which need opposite fixes, and reports which side of the sandbox boundary
+the tool is running on.
 
 **Otherwise the runner**, which is what a plain skill install has. The
 runner lives beside this file, and the shell's working directory is the
