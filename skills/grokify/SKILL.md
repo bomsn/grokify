@@ -153,6 +153,23 @@ Resolution rules are in `reference/context-resolution.md`. In short:
   two as `type="author-sample"`. A paragraph that demonstrates the voice
   beats a paragraph that describes it.
 
+**Send what constrains the writing, not the method that produced it.** A
+style guide that governed the draft usually contains two different things:
+rules about the finished text - banned words, register, structure, the
+audience - and instructions about how to work. Only the first kind belongs
+in the payload.
+
+This matters more than it sounds. The draft was written against that guide,
+so a guide sent whole becomes a checklist the draft already passes, and
+Grok returns it nearly unchanged for the perfectly good reason that it
+complies. The point of sending the draft to a different model is a voice
+that model does not share; hand over the full rulebook that shaped the
+draft and that voice is gone. Extract the constraints, drop the method, and
+let the author's own samples carry the voice.
+
+Where a guide is long and mostly method, quote the constraining lines under
+`type="style-guide"` rather than pasting the file.
+
 Never send credentials, `.env` files, key material, or customer personal
 data as reference material. Exclude them even when a `--context` folder
 contains them, and say which files were excluded.
@@ -164,12 +181,28 @@ load-bearing: role and rules first, long reference material next, the
 draft after that, and the task instruction last. Do not reorder it, and
 do not add sections it does not define.
 
-The rule blocks (`<preservation>`, `<voice>`, `<cuts>`, `<shape>`,
-`<output_format>`) go through verbatim. They are the product. Trim
-reference material when the budget is tight; never trim a rule block.
+The rule blocks (`<mandate>`, `<method>`, `<preservation>`, `<voice>`,
+`<cuts>`, `<shape>`, `<output_format>`) go through verbatim. They are the
+product. Trim reference material when the budget is tight; never trim a
+rule block.
 
 `Register:` takes the one mode contract that applies, as text.
 `reference/modes.md` itself never goes into the payload.
+
+**`Length:` is a target, not a leash.** Write `no target - as long as the
+content needs` unless the user asked for a length or the medium imposes
+one. `keep the draft's length` reads as an instruction to keep the draft's
+sentences, and a rewrite that may not change the length has almost nothing
+left it is allowed to do.
+
+**`Also:` is for constraints on the output, not for caution.** A URL that
+must survive exactly, a numbering scheme that maps to the reader's own
+questions, a price that must not be recomputed: those belong there. "Keep
+the structure", "do not change much", and anything restating
+`<preservation>` do not. Every cautionary line added here trades directly
+against how much the rewrite will change, which is the thing being paid
+for. If a line does not name something specific that would be wrong in the
+output, leave it out.
 
 Write the filled payload to a temp file:
 
@@ -179,6 +212,23 @@ PAYLOAD="$(mktemp -d)/payload.md"
 
 Omit any block whose content is empty. An empty `<reference_material>`
 tag teaches the model that reference material is optional and unimportant.
+
+**Count the constraints in the payload you actually built, not in the
+template.** The template's rule blocks are sized to leave room for a
+rewrite. Reference material and the `Also:` line arrive later and are
+invisible to whoever balanced the template, and they carry constraints of
+their own. Past a certain density the safest thing a model can do is
+change nothing, which is the one outcome this skill exists to prevent.
+
+Before running, read the filled payload and check that:
+
+- the rewrite mandate is still the loudest thing in it,
+- nothing in reference material tells the model how to write, as opposed
+  to what the writing has to respect,
+- reference material is smaller than the rule blocks. When it is not, quote
+  the constraining lines instead of pasting whole documents.
+
+Trim reference material first when any of those fail.
 
 ## Step 5 - Run Grok
 
@@ -279,10 +329,22 @@ actually changed. When the result came back close to the draft, say that
 in one line instead of finding five things to list. Do not critique the
 result and do not offer to improve it further.
 
-A result that comes back close to the draft is not a failed run. A draft
-already written in a human register leaves Grok little to do, and
-returning it nearly unchanged is the correct outcome. Do not re-run it to
-manufacture a bigger difference.
+**A result that is nearly identical to the draft is a failed run, and it
+gets reported as one.** Print it, because the output is Grok's and never
+gets edited here, then say in one line that it came back close to the
+draft and name the likeliest cause from the payload that was actually
+sent:
+
+- Reference material carried the same style guide the draft was written
+  against, so the draft passed the checklist it was written to pass.
+- The `Length:` line pinned the length, or the `Also:` line pinned the
+  structure, leaving little the rewrite was allowed to change.
+- The draft is mostly quoted material, code, or preserved facts, so there
+  was little prose in it to rewrite.
+
+Offer one re-run with the specific line removed. Do not re-run
+automatically, and do not rewrite the result here to manufacture a
+difference.
 
 Two things never happen: rewording Grok's output, and blending it with a
 version written here. If the result is wrong, the fix is another run with
