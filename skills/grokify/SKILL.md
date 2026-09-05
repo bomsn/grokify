@@ -181,10 +181,11 @@ load-bearing: role and rules first, long reference material next, the
 draft after that, and the task instruction last. Do not reorder it, and
 do not add sections it does not define.
 
-The rule blocks (`<mandate>`, `<method>`, `<preservation>`, `<voice>`,
-`<cuts>`, `<shape>`, `<output_format>`) go through verbatim. They are the
-product. Trim reference material when the budget is tight; never trim a
-rule block.
+The three rule blocks (`<accuracy>`, `<voice>`, `<output_format>`) go
+through verbatim. They are deliberately short: the more the payload tells
+Grok, the more it edits the draft instead of writing its own version. Trim
+reference material when the budget is tight; never trim a rule block, and
+never add a fourth.
 
 `Register:` takes the one mode contract that applies, as text.
 `reference/modes.md` itself never goes into the payload.
@@ -195,14 +196,12 @@ one. `keep the draft's length` reads as an instruction to keep the draft's
 sentences, and a rewrite that may not change the length has almost nothing
 left it is allowed to do.
 
-**`Also:` is for constraints on the output, not for caution.** A URL that
-must survive exactly, a numbering scheme that maps to the reader's own
-questions, a price that must not be recomputed: those belong there. "Keep
-the structure", "do not change much", and anything restating
-`<preservation>` do not. Every cautionary line added here trades directly
-against how much the rewrite will change, which is the thing being paid
-for. If a line does not name something specific that would be wrong in the
-output, leave it out.
+**`Also:` takes only what would be factually wrong if left out.** A price
+that must not be recomputed, a scope line that must not be widened, a
+consent the author has not given. "Keep the structure", "keep the length",
+"do not change much" and anything restating `<accuracy>` do not go there.
+Each cautionary line costs exactly what it buys: less rewriting. Most runs
+leave `Also:` empty, and that is the healthy default.
 
 Write the filled payload to a temp file:
 
@@ -213,22 +212,21 @@ PAYLOAD="$(mktemp -d)/payload.md"
 Omit any block whose content is empty. An empty `<reference_material>`
 tag teaches the model that reference material is optional and unimportant.
 
-**Count the constraints in the payload you actually built, not in the
-template.** The template's rule blocks are sized to leave room for a
-rewrite. Reference material and the `Also:` line arrive later and are
-invisible to whoever balanced the template, and they carry constraints of
-their own. Past a certain density the safest thing a model can do is
-change nothing, which is the one outcome this skill exists to prevent.
+**Read the payload you actually built, not the template.** Reference
+material and `Also:` arrive after the template was balanced, and they carry
+instructions of their own. Past a certain density the safest thing a model
+can do is change almost nothing, which is the one outcome this skill exists
+to prevent.
 
-Before running, read the filled payload and check that:
+Two checks before running:
 
-- the rewrite mandate is still the loudest thing in it,
-- nothing in reference material tells the model how to write, as opposed
-  to what the writing has to respect,
-- reference material is smaller than the rule blocks. When it is not, quote
-  the constraining lines instead of pasting whole documents.
-
-Trim reference material first when any of those fail.
+- Nothing in reference material tells Grok how to write. Style guides that
+  governed the draft belong here only as the constraints they impose -
+  banned words, audience, register - never as the method. A guide sent
+  whole becomes a checklist the draft already passes, and Grok hands it
+  back.
+- Reference material is not the bulk of the payload. When it is, quote the
+  lines that constrain and drop the rest.
 
 ## Step 5 - Run Grok
 
@@ -383,8 +381,8 @@ layered on top.
 
 ## What Grok must not change
 
-The preservation contract is the difference between a rewrite and a
-rewrite that has to be checked line by line. It ships in every payload:
+The accuracy contract is the difference between a rewrite and a rewrite
+that has to be checked line by line. It ships in every payload:
 facts, numbers, dates, names, quotes, code, commands, file paths, error
 strings, URLs, placeholders, front matter, and the draft's language all
 survive byte for byte.

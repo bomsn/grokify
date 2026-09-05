@@ -146,17 +146,17 @@ first lines. If it happens repeatedly:
 
 ## The rewrite changed a number, a name, or a code block
 
-The `<preservation>` block is the defense, and it belongs near the top of
-the payload where it governs everything after it. Verify it was included
-and not trimmed by the budget rules. Reference material is trimmable;
-preservation rules are not.
+The `<accuracy>` block is the defense, and it belongs near the top of the
+payload where it governs everything after it. Verify it was included and
+not trimmed by the budget rules. Reference material is trimmable; the
+accuracy rules are not.
 
 If it persists on a specific draft, the draft is probably mixing prose and
 code without fences. Fence the code before sending.
 
 ## The result is in the wrong language
 
-The preservation contract keeps the draft's language unless
+The accuracy contract keeps the draft's language unless
 `<style_contract>` names another. A draft that mixes languages gives the
 model no default to hold. Pass `--lang` explicitly.
 
